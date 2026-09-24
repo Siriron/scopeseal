@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  background: #F0E6D6;
+}
+
+body {
+  margin: 0;
+  color: #22201B;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: #B8863B;
+  color: #F0E6D6;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #8B3A2F #E4D5BC;
+}
+
+:focus-visible {
+  outline: 2px solid #8B3A2F;
+  outline-offset: 2px;
+}
+
+.seal-texture {
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(139, 58, 47, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 80% 70%, rgba(74, 93, 58, 0.03) 0%, transparent 50%);
+}
