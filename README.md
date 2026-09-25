@@ -132,17 +132,16 @@ LICENSE                      MIT
 <div align="center">
 
 ![Tested](https://img.shields.io/badge/contract%20logic-tested-brightgreen?style=flat-square)
-![Untested](https://img.shields.io/badge/live%20Studio%20deploy-untested-yellow?style=flat-square)
+![Live](https://img.shields.io/badge/live%20StudioNet-verified-brightgreen?style=flat-square)
 
 </div>
 
 All 29 direct-mode tests pass against the real contract under `genlayer-test==0.29.2`, and
-`genvm-lint check` passes clean. This proves the contract's own logic, validator agreement rules,
-fetch-error handling, and nondet-safety — it does not prove real-LLM behavior, real network
-timing, or real multi-node consensus, since direct mode mocks both the registry fetch and the LLM
-call. The frontend passes `npm run typecheck` and `npm run build` but has not yet been run against
-a live deployed contract. See [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) for the full, itemized
-breakdown of what is and isn't proven.
+`genvm-lint check` passes clean. Beyond that, all three verdict paths (`COMPLIANT`,
+`SCOPE_VIOLATION`, `INCONCLUSIVE`) have been run live against the deployed contract on StudioNet,
+through the real app, with real GenVM validator consensus and a real npm registry fetch — not
+mocked. See [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) for the transaction links and the full,
+itemized breakdown of what is and isn't proven.
 
 <br />
 
