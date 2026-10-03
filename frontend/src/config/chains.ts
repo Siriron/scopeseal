@@ -17,4 +17,4 @@ export const EXPLORER_ADDRESS_URL = (address: string) =>
 
 // Update this one line after each redeploy — this is the only place the
 // deployed contract address lives.
-export const CONTRACT_ADDRESS = "0xb75215a19AD9d4d46845CB4686c664E16af13199";
+export const CONTRACT_ADDRESS = "0x23045738dB42801d5ABEb9fcc288Bc4caBb11EE7";
