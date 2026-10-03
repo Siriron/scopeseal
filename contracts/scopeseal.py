@@ -63,6 +63,17 @@ a first-of-genre build simple, avoids any staking/slashing ethics review
 surface, and diversifies this project's own mechanism-shape rotation
 away from the staked two-party disputes already built.
 
+VERDICT DERIVATION (steward review, Sep 2026): COMPLIANT vs SCOPE_VIOLATION
+is computed by _derive_verdict() in plain Python from the observed
+manifest facts, the declaration's locked scope and the profile ceiling.
+The LLM does NOT decide the verdict; it only writes the explanation. If
+the model's stated verdict contradicts the derived one, its text is
+discarded and a deterministic explanation is stored instead. A validator
+re-fetches the manifest itself (no LLM call), re-derives every fact and
+the verdict, and rejects any leader result whose verdict conflicts with
+the verdict derived from the leader's OWN reported facts, or with the
+verdict derived from the validator's facts.
+
 VERDICT SHAPE: three-way — COMPLIANT, SCOPE_VIOLATION, INCONCLUSIVE.
 INCONCLUSIVE is the honest, expected outcome when a declared version has
 not actually been published yet at check time (confirmed live: a 404
@@ -88,6 +99,13 @@ All three values are therefore reachable; none is a legal-but-dead enum
 member.
 
 DELIBERATE GAPS, STATED EXPLICITLY:
+  - declare_release is restricted to the profile owner and allows exactly
+    one declaration per package@version, so a third party cannot squat a
+    version with a tight scope and the (package, version) -> declaration
+    id lookup is unambiguous. register_profile has no proof that the
+    caller owns the npm package (first caller wins); that is a known gap.
+  - A declaration checked before the version is published ends as
+    INCONCLUSIVE and cannot be re-checked.
   - No re-check/appeal window in this first version — a declaration
     receives exactly one compliance check. A future iteration could add
     a re-check triggered by a fresh registry fetch if the maintainer
@@ -156,12 +174,13 @@ _CHARTER = (
     "'dependency_count' (0 if the field is absent); (3) whether the "
     "observed manifest declares an engines or os/cpu restriction beyond "
     "what was declared — 'has_undeclared_platform_restriction'. "
-    "Then decide a verdict: COMPLIANT only if every observed value is "
-    "within both the declared scope and the profile ceiling. "
-    "SCOPE_VIOLATION if any observed value exceeds either the declared "
-    "scope or the profile ceiling. Respond with the fields exactly as "
-    "specified below — the contract itself decides INCONCLUSIVE for "
-    "fetch/identifier failures, never you."
+    "Then state a verdict: COMPLIANT only if every observed value is "
+    "within both the declared scope and the profile ceiling; SCOPE_VIOLATION "
+    "if any observed value exceeds either. The contract derives the binding "
+    "verdict itself from the facts and discards your text if it disagrees, "
+    "so your job is an accurate, specific explanation. Respond with the "
+    "fields exactly as specified below — the contract decides INCONCLUSIVE "
+    "for fetch/identifier failures, never you."
 )
 
 
@@ -190,7 +209,14 @@ def _wrap_untrusted(label, text) -> str:
     )
 
 
+_NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789-._~"
+_VERSION_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-+"
+
+
 def _valid_package_name(name) -> bool:
+    # Rule 0.7: the name is interpolated into a fetch URL, so it is held to
+    # npm's own character set (optionally one leading @scope/) instead of
+    # "anything without a space".
     if not isinstance(name, str):
         return False
     n = name.strip()
@@ -198,10 +224,18 @@ def _valid_package_name(name) -> bool:
         return False
     if n != n.lower():
         return False
-    if n.startswith(".") or n.startswith("_"):
-        return False
-    if " " in n or "\\" in n:
-        return False
+    if n.startswith("@"):
+        parts = n[1:].split("/")
+        if len(parts) != 2:
+            return False
+    else:
+        parts = [n]
+    for part in parts:
+        if len(part) == 0 or part.startswith(".") or part.startswith("_"):
+            return False
+        for ch in part:
+            if ch not in _NAME_CHARS:
+                return False
     return True
 
 
@@ -211,6 +245,9 @@ def _valid_version(version) -> bool:
     v = version.strip()
     if len(v) == 0 or len(v) > _MAX_VERSION_LEN:
         return False
+    for ch in v:
+        if ch not in _VERSION_CHARS:
+            return False
     parts = v.split(".")
     if len(parts) < 2:
         return False
@@ -359,6 +396,55 @@ def _extract_observed_facts(manifest) -> dict:
     }
 
 
+def _derive_verdict(observed, declared, ceiling) -> str:
+    """
+    Deterministic verdict. SCOPE_VIOLATION if any observed fact exceeds the
+    locked declaration OR the profile ceiling; otherwise COMPLIANT. All
+    inputs are plain dicts of primitives. Pure: no LLM, no storage.
+    """
+    if observed["has_lifecycle_script"]:
+        if not (declared["allow_lifecycle_scripts"] and ceiling["allow_lifecycle_scripts"]):
+            return "SCOPE_VIOLATION"
+    limit = min(int(declared["max_dependency_count"]), int(ceiling["max_dependency_count"]))
+    if int(observed["dependency_count"]) > limit:
+        return "SCOPE_VIOLATION"
+    if observed["has_platform_restriction"]:
+        if not (declared["allow_platform_restriction"] and ceiling["allow_platform_restriction"]):
+            return "SCOPE_VIOLATION"
+    return "COMPLIANT"
+
+
+def _derived_reasoning(verdict, observed) -> str:
+    return (
+        f"Derived from the registry manifest: lifecycle script "
+        f"{'present' if observed['has_lifecycle_script'] else 'absent'}, "
+        f"{int(observed['dependency_count'])} direct dependencies, platform restriction "
+        f"{'present' if observed['has_platform_restriction'] else 'absent'}; verdict {verdict}."
+    )
+
+
+def _observe(url, name, version):
+    """
+    Fetch + Rule 0.8 identity binding, no LLM. Returns either
+    {"path": "INCONCLUSIVE", "reason": str} or
+    {"path": "OBSERVED", "facts": {...}, "excerpt": str}.
+    Module-level so leader and validator share one code path.
+    """
+    fetch_status, manifest = _fetch_json_manifest(url)
+    if fetch_status == "NOT_FOUND":
+        return {"path": "INCONCLUSIVE", "reason": "version_not_published"}
+    if fetch_status != "OK" or manifest is None:
+        return {"path": "INCONCLUSIVE", "reason": f"fetch_failed_{fetch_status.lower()}"}
+    facts = _extract_observed_facts(manifest)
+    if facts["manifest_name"] != name or facts["manifest_version"] != version:
+        return {"path": "INCONCLUSIVE", "reason": "identifier_mismatch"}
+    return {"path": "OBSERVED", "facts": facts, "excerpt": _canonical_excerpt(manifest)}
+
+
+def _is_int(x) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
 def _judgment_prompt(declared, ceiling, observed, manifest_excerpt) -> str:
     parts = [
         _CHARTER,
@@ -434,6 +520,10 @@ class ScopeSeal(gl.Contract):
     profiles: TreeMap[str, PublishProfile]
     declarations: TreeMap[u256, ReleaseDeclaration]
     ledgers: TreeMap[str, PackageLedger]
+    # "<package>@<version>" -> declaration id (one declaration per version)
+    declaration_keys: TreeMap[str, u256]
+    # lowercase sender address -> id of the declaration that sender made last
+    latest_declaration_by_sender: TreeMap[str, u256]
     next_declaration_id: u256
 
     def __init__(self):
@@ -495,6 +585,9 @@ class ScopeSeal(gl.Contract):
         assert _valid_version(clean_version), "invalid version"
 
         profile = self.profiles[clean_name]
+        assert gl.message.sender_address == profile.owner, "only the profile owner can declare a release"
+        decl_key = f"{clean_name}@{clean_version}"
+        assert decl_key not in self.declaration_keys, "version already declared"
         if not profile.allow_lifecycle_scripts:
             assert not declared_allow_lifecycle_scripts, "declared scope exceeds profile ceiling: lifecycle scripts"
         if int(declared_max_dependency_count) > int(profile.max_dependency_count):
@@ -522,7 +615,14 @@ class ScopeSeal(gl.Contract):
             created_at=u64(_now_epoch_seconds()),
             checked_at=u64(0),
         )
-        return json.dumps({"declaration_id": int(did), "status": "declared"})
+        self.declaration_keys[decl_key] = did
+        self.latest_declaration_by_sender[str(gl.message.sender_address).lower()] = did
+        return json.dumps({
+            "declaration_id": int(did),
+            "package_name": clean_name,
+            "version": clean_version,
+            "status": "declared",
+        })
 
     # ------------------------------------------------------------------
     # Compliance check (nondet — full rule set applies)
@@ -540,51 +640,54 @@ class ScopeSeal(gl.Contract):
         profile = self.profiles[d.package_name]
         p_mem = gl.storage.copy_to_memory(profile)
 
-        url = _registry_url(d_mem.package_name, d_mem.version)
+        # Plain primitives only — nothing storage-backed is closed over.
+        name = str(d_mem.package_name)
+        version = str(d_mem.version)
+        url = _registry_url(name, version)
+        declared = {
+            "allow_lifecycle_scripts": bool(d_mem.declared_allow_lifecycle_scripts),
+            "max_dependency_count": int(d_mem.declared_max_dependency_count),
+            "allow_platform_restriction": bool(d_mem.declared_allow_platform_restriction),
+        }
+        ceiling = {
+            "allow_lifecycle_scripts": bool(p_mem.allow_lifecycle_scripts),
+            "max_dependency_count": int(p_mem.max_dependency_count),
+            "allow_platform_restriction": bool(p_mem.allow_platform_restriction),
+        }
 
         # Bug 6 fix: nested functions, zero self reference anywhere.
         def leader_fn():
-            fetch_status, manifest = _fetch_json_manifest(url)
-
-            if fetch_status == "NOT_FOUND":
-                return {"path": "INCONCLUSIVE", "reason": "version_not_published"}
-            if fetch_status != "OK" or manifest is None:
-                return {"path": "INCONCLUSIVE", "reason": f"fetch_failed_{fetch_status.lower()}"}
-
-            observed = _extract_observed_facts(manifest)
-            # Rule 0.8: the fetched record must actually belong to the
-            # claimed identifier before it can influence the verdict.
-            if observed["manifest_name"] != d_mem.package_name or observed["manifest_version"] != d_mem.version:
-                return {"path": "INCONCLUSIVE", "reason": "identifier_mismatch"}
-
-            manifest_excerpt = _canonical_excerpt(manifest)
-            declared = {
-                "allow_lifecycle_scripts": d_mem.declared_allow_lifecycle_scripts,
-                "max_dependency_count": int(d_mem.declared_max_dependency_count),
-                "allow_platform_restriction": d_mem.declared_allow_platform_restriction,
+            obs = _observe(url, name, version)
+            if obs["path"] != "OBSERVED":
+                return {"path": "INCONCLUSIVE", "reason": obs["reason"]}
+            facts = obs["facts"]
+            observed = {
+                "has_lifecycle_script": bool(facts["has_lifecycle_script"]),
+                "dependency_count": int(facts["dependency_count"]),
+                "has_platform_restriction": bool(facts["has_platform_restriction"]),
             }
-            ceiling = {
-                "allow_lifecycle_scripts": p_mem.allow_lifecycle_scripts,
-                "max_dependency_count": int(p_mem.max_dependency_count),
-                "allow_platform_restriction": p_mem.allow_platform_restriction,
-            }
-            prompt = _judgment_prompt(declared, ceiling, observed, manifest_excerpt)
+            verdict = _derive_verdict(observed, declared, ceiling)
+
+            prompt = _judgment_prompt(declared, ceiling, facts, obs["excerpt"])
             result = gl.nondet.exec_prompt(prompt, response_format="json")
             if not isinstance(result, dict):
                 raise gl.vm.UserError("llm_non_dict_response")
-
             llm_verdict = result.get("verdict")
             if llm_verdict not in ("COMPLIANT", "SCOPE_VIOLATION"):
                 raise gl.vm.UserError("llm_invalid_verdict")
             reasoning = result.get("reasoning_summary", "")
-            reasoning_str = reasoning if isinstance(reasoning, str) else ""
+            reasoning_str = reasoning.strip() if isinstance(reasoning, str) else ""
+            if llm_verdict != verdict or len(reasoning_str) < _MIN_REASONING_LEN:
+                # The model contradicted the derived facts (or said nothing
+                # usable): its text is discarded, never stored.
+                reasoning_str = _derived_reasoning(verdict, observed)
 
             return {
                 "path": "CHECKED",
-                "verdict": llm_verdict,
-                "has_lifecycle_script": bool(observed["has_lifecycle_script"]),
-                "dependency_count": int(observed["dependency_count"]),
-                "has_platform_restriction": bool(observed["has_platform_restriction"]),
+                "verdict": verdict,
+                "has_lifecycle_script": observed["has_lifecycle_script"],
+                "dependency_count": observed["dependency_count"],
+                "has_platform_restriction": observed["has_platform_restriction"],
                 "reasoning_summary": reasoning_str,
             }
 
@@ -594,46 +697,54 @@ class ScopeSeal(gl.Contract):
             leader_data = leaders_res.calldata
             if not isinstance(leader_data, dict):
                 return False
-            try:
-                my_data = leader_fn()
-            except Exception:
-                return False
-            if not isinstance(my_data, dict):
-                return False
 
+            # The validator re-fetches and re-derives on its own; no LLM
+            # call is needed because no LLM output decides anything.
+            mine = _observe(url, name, version)
+            my_path = "CHECKED" if mine["path"] == "OBSERVED" else "INCONCLUSIVE"
             leader_path = leader_data.get("path")
-            my_path = my_data.get("path")
             if leader_path not in ("INCONCLUSIVE", "CHECKED"):
                 return False
             if leader_path != my_path:
                 return False
-
             if leader_path == "INCONCLUSIVE":
-                # Both independently reached INCONCLUSIVE — the specific
-                # reason string may vary (a transient HTTP_ERROR on one
-                # node vs. FETCH_ERROR on another is plausible cross-node
-                # variance for a genuinely down endpoint), but the path
-                # classification itself must match exactly.
+                # Specific reason strings may differ across nodes (HTTP_ERROR
+                # vs FETCH_ERROR for a down endpoint); the path must match.
                 return True
 
-            # path == "CHECKED": every decision-bearing field must be
-            # independently re-derived and compared, not just the coarse
-            # verdict bucket (this project's own generalized rule).
-            if leader_data.get("verdict") not in ("COMPLIANT", "SCOPE_VIOLATION"):
+            verdict = leader_data.get("verdict")
+            if verdict not in ("COMPLIANT", "SCOPE_VIOLATION"):
                 return False
-            if leader_data.get("verdict") != my_data.get("verdict"):
+            l_script = leader_data.get("has_lifecycle_script")
+            l_deps = leader_data.get("dependency_count")
+            l_plat = leader_data.get("has_platform_restriction")
+            if not isinstance(l_script, bool) or not isinstance(l_plat, bool):
                 return False
-            if bool(leader_data.get("has_lifecycle_script")) != bool(my_data.get("has_lifecycle_script")):
+            if not _is_int(l_deps) or l_deps < 0:
                 return False
-            try:
-                leader_deps = int(leader_data.get("dependency_count", -1))
-                my_deps = int(my_data.get("dependency_count", -1))
-            except (TypeError, ValueError):
+
+            # Conflict gate: the leader's verdict must follow from the
+            # leader's own reported facts.
+            leader_facts = {
+                "has_lifecycle_script": l_script,
+                "dependency_count": l_deps,
+                "has_platform_restriction": l_plat,
+            }
+            if _derive_verdict(leader_facts, declared, ceiling) != verdict:
                 return False
-            if leader_deps < 0 or leader_deps != my_deps:
+
+            # Every decision-bearing fact is independently re-derived.
+            mf = mine["facts"]
+            my_facts = {
+                "has_lifecycle_script": bool(mf["has_lifecycle_script"]),
+                "dependency_count": int(mf["dependency_count"]),
+                "has_platform_restriction": bool(mf["has_platform_restriction"]),
+            }
+            if my_facts != leader_facts:
                 return False
-            if bool(leader_data.get("has_platform_restriction")) != bool(my_data.get("has_platform_restriction")):
+            if _derive_verdict(my_facts, declared, ceiling) != verdict:
                 return False
+
             reasoning = leader_data.get("reasoning_summary", "")
             if not isinstance(reasoning, str) or len(reasoning.strip()) < _MIN_REASONING_LEN:
                 return False
@@ -725,6 +836,20 @@ class ScopeSeal(gl.Contract):
             "latest_verdict": l.latest_verdict,
             "latest_declaration_id": int(l.latest_declaration_id),
         })
+
+    @gl.public.view
+    def get_declaration_id(self, package_name: str, version: str) -> str:
+        key = f"{package_name.strip().lower()}@{version.strip()}"
+        if key not in self.declaration_keys:
+            return json.dumps({"status": "not_declared"})
+        return json.dumps({"declaration_id": int(self.declaration_keys[key])})
+
+    @gl.public.view
+    def get_latest_declaration_for(self, address: str) -> str:
+        key = address.strip().lower()
+        if key not in self.latest_declaration_by_sender:
+            return json.dumps({"status": "none"})
+        return json.dumps({"declaration_id": int(self.latest_declaration_by_sender[key])})
 
     @gl.public.view
     def get_next_declaration_id(self) -> str:
