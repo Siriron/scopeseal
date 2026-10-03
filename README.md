@@ -55,7 +55,9 @@ within what was declared — never taking the maintainer's word for it.
 2. Before publishing a version, they call `declare_release`, locking that version's declared scope
    — rejected on-chain if it exceeds the ceiling on any field.
 3. Once the version is live on npm, anyone calls `check_compliance`. Validators fetch the real
-   manifest, independently derive the observed scope, and reach a verdict through consensus.
+   manifest and independently derive the observed facts. The contract then derives the verdict
+   (`COMPLIANT` or `SCOPE_VIOLATION`) from those facts in plain code; the LLM only writes the
+   explanation, and a validator rejects any result whose verdict conflicts with the facts.
 
 <br />
 
@@ -84,7 +86,7 @@ within what was declared — never taking the maintainer's word for it.
 
 | Network | Address | Explorer |
 |---|---|---|
-| StudioNet | `0xb75215a19AD9d4d46845CB4686c664E16af13199` | [View](https://explorer-studio.genlayer.com/address/0xb75215a19AD9d4d46845CB4686c664E16af13199) |
+| StudioNet | `0x23045738dB42801d5ABEb9fcc288Bc4caBb11EE7` | [View](https://explorer-studio.genlayer.com/address/0x23045738dB42801d5ABEb9fcc288Bc4caBb11EE7) |
 
 </div>
 
@@ -103,8 +105,17 @@ npm run dev
 Run the contract tests (they execute the real contract under the GenVM SDK in direct mode):
 
 ```bash
-pip install "genlayer-test==0.29.2"
+pip install -r requirements-dev.txt     # genlayer-test==0.29.2, genvm-linter==0.11.0
+genvm-lint check contracts/scopeseal.py
 pytest tests -q -p no:cacheprovider
+```
+
+Frontend checks (also run by `.github/workflows/ci.yml`):
+
+```bash
+cd frontend
+npm ci --no-audit --no-fund
+npm run typecheck && npm run lint && npm test && npm run build
 ```
 
 Full deployment instructions: [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)
@@ -119,7 +130,9 @@ Full deployment instructions: [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)
 contracts/scopeseal.py    The GenVM contract
 frontend/                  React + Vite app
 docs/                       ARCHITECTURE.md, DEPLOYMENT.md, FRONTEND.md, CONTRACTS.md
-tests/                       direct-mode test suite (29 tests)
+tests/                       direct-mode contract tests (81)
+frontend/src/lib/tx.test.ts  frontend transaction-outcome tests (47)
+.github/workflows/ci.yml     npm ci, typecheck, lint, test, build, genvm-lint, pytest
 LICENSE                      MIT
 ```
 
@@ -132,16 +145,20 @@ LICENSE                      MIT
 <div align="center">
 
 ![Tested](https://img.shields.io/badge/contract%20logic-tested-brightgreen?style=flat-square)
-![Live](https://img.shields.io/badge/live%20StudioNet-verified-brightgreen?style=flat-square)
+![Live](https://img.shields.io/badge/StudioNet%20verdict%20paths-verified-brightgreen?style=flat-square)
 
 </div>
 
-All 29 direct-mode tests pass against the real contract under `genlayer-test==0.29.2`, and
-`genvm-lint check` passes clean. Beyond that, all three verdict paths (`COMPLIANT`,
-`SCOPE_VIOLATION`, `INCONCLUSIVE`) have been run live against the deployed contract on StudioNet,
-through the real app, with real GenVM validator consensus and a real npm registry fetch — not
-mocked. See [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) for the transaction links and the full,
-itemized breakdown of what is and isn't proven.
+The contract was changed after steward review (verdict derived in code, one owner-only declaration
+per version, persisted declaration ids). Against the changed contract: `genvm-lint check` passes,
+all 81 direct-mode tests pass under `genlayer-test==0.29.2`, and the frontend passes `npm ci`,
+`typecheck`, `lint`, 47 unit tests and `build`.
+
+The changed contract is deployed on StudioNet at `0x23045738dB42801d5ABEb9fcc288Bc4caBb11EE7`.
+On Oct 3, 2026 all three verdicts (COMPLIANT, SCOPE_VIOLATION, INCONCLUSIVE) were run against it
+with real validator consensus and a real npm fetch; the transactions are in
+[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md). Not yet run live against it: the revert cases, the
+persisted-id views, and the deployed frontend flow.
 
 <br />
 
