@@ -14,8 +14,10 @@ independently confirm whether what actually shipped matched what was declared.`,
 the scope for one exact version, before any compliance check exists — so it can't be reshaped once
 the real numbers are known. check_compliance is the only write that touches consensus: it fetches
 https://registry.npmjs.org/{name}/{version}, a public, unauthenticated, deterministic endpoint,
-extracts the real script/dependency/platform fields, and both the leader and every validator
-independently reach the same verdict from the same fetched bytes before it's accepted.`,
+extracts the real script/dependency/platform fields, and the contract derives COMPLIANT or
+SCOPE_VIOLATION from those facts in plain code. The model only writes the explanation; every
+validator re-fetches the manifest and rejects any result whose verdict conflicts with the facts.
+Only the profile owner can declare, and each version can be declared once.`,
   },
   {
     title: "Architecture",
@@ -27,7 +29,7 @@ violation / inconclusive count). There is no staking and no GEN transfer anywher
   {
     title: "Smart contracts",
     body: `contracts/scopeseal.py — the full contract. Deployed on GenLayer StudioNet (chain ID
-61999). See the README for the current deployed address and deployment transaction.`,
+61999). Current address: 0x23045738dB42801d5ABEb9fcc288Bc4caBb11EE7.`,
   },
   {
     title: "API reference",
@@ -35,6 +37,7 @@ violation / inconclusive count). There is no staking and no GEN transfer anywher
 allow_platform_restriction); declare_release(package_name, version, declared_allow_lifecycle_scripts,
 declared_max_dependency_count, declared_allow_platform_restriction); check_compliance(declaration_id).
 Views — get_profile(package_name), get_declaration(declaration_id), get_ledger(package_name),
+get_declaration_id(package_name, version), get_latest_declaration_for(address),
 get_next_declaration_id().`,
   },
   {

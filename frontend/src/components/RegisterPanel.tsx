@@ -5,6 +5,8 @@ import { isValidPackageName } from "../lib/validation";
 import { ScopeFields, type ScopeValue } from "./ScopeFields";
 import { Spinner } from "./Spinner";
 import { EXPLORER_TX_URL } from "../config/chains";
+import { toErrorView, type ErrorView } from "../lib/errors";
+import { TxFailureNotice } from "./TxFailureNotice";
 
 export function RegisterPanel() {
   const { account, connect } = useWallet();
@@ -16,7 +18,7 @@ export function RegisterPanel() {
   });
   const [status, setStatus] = useState<"idle" | "pending" | "done" | "error">("idle");
   const [txHash, setTxHash] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ErrorView | null>(null);
 
   const nameValid = isValidPackageName(packageName);
   const depValid = /^\d+$/.test(scope.maxDependencyCount) && Number(scope.maxDependencyCount) >= 0;
@@ -27,7 +29,7 @@ export function RegisterPanel() {
       return;
     }
     setStatus("pending");
-    setError("");
+    setError(null);
     try {
       const hash = await registerProfile(
         account,
@@ -39,7 +41,7 @@ export function RegisterPanel() {
       setTxHash(hash);
       setStatus("done");
     } catch (err: any) {
-      setError(err?.message ?? "The registration didn't go through.");
+      setError(toErrorView(err, "The registration didn't go through."));
       setStatus("error");
     }
   }
@@ -88,7 +90,7 @@ export function RegisterPanel() {
           </a>
         </p>
       )}
-      {status === "error" && <p className="text-sm text-oxblood">{error}</p>}
+      {status === "error" && error && <TxFailureNotice error={error} />}
     </div>
   );
 }

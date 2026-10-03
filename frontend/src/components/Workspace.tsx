@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { RegisterPanel } from "./RegisterPanel";
 import { DeclarePanel } from "./DeclarePanel";
-import { CheckPanel } from "./CheckPanel";
+import { CheckPanel, type CheckTarget } from "./CheckPanel";
 import { LookupPanel } from "./LookupPanel";
 
 type Tab = "lookup" | "register" | "declare" | "check";
@@ -15,6 +15,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function Workspace() {
   const [tab, setTab] = useState<Tab>("lookup");
+  const [prefill, setPrefill] = useState<CheckTarget | null>(null);
 
   return (
     <section className="max-w-5xl mx-auto px-6 pb-24">
@@ -37,8 +38,15 @@ export function Workspace() {
         <div className="p-6 sm:p-8">
           {tab === "lookup" && <LookupPanel />}
           {tab === "register" && <RegisterPanel />}
-          {tab === "declare" && <DeclarePanel />}
-          {tab === "check" && <CheckPanel />}
+          {tab === "declare" && (
+            <DeclarePanel
+              onRunCheck={(t) => {
+                setPrefill(t);
+                setTab("check");
+              }}
+            />
+          )}
+          {tab === "check" && <CheckPanel key={prefill ? `${prefill.packageName}@${prefill.version}` : "blank"} prefill={prefill} />}
         </div>
       </div>
     </section>
