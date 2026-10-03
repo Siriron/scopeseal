@@ -21,8 +21,11 @@ check_compliance(declaration_id)
   identifier mismatch (Rule 0.8) → verdict INCONCLUSIVE
   fetch OK → extract observed facts (script presence, dep count, platform)
         ↓
-  LLM judgment (COMPLIANT | SCOPE_VIOLATION), independently re-derived
-  by every validator from the same fetched bytes
+  verdict = _derive_verdict(observed facts, declared scope, profile ceiling)
+  LLM writes the explanation only; a contradicting LLM verdict is discarded
+        ↓
+  every validator re-fetches, re-derives facts and verdict, and rejects any
+  leader result whose verdict conflicts with the facts
         ↓
   ReleaseDeclaration.status="checked", verdict recorded
   PackageLedger counters updated
@@ -45,11 +48,13 @@ check_compliance(declaration_id)
 - **No storage-backed object crosses into the nondet closure.** Both the
   declaration and the profile are `copy_to_memory()`'d in the deterministic
   body of `check_compliance` before `run_nondet_unsafe` is entered.
-- **Every decision-bearing field is independently re-derived.** `validator_fn`
-  does not just check that the leader's output is well-formed JSON — it
-  calls `leader_fn()` itself and compares the verdict, the lifecycle-script
-  flag, the exact dependency count, and the platform-restriction flag,
-  field by field.
+- **The verdict is not an LLM output.** It is computed from the observed
+  facts by `_derive_verdict`. `validator_fn` re-fetches the manifest itself
+  (no LLM call), compares the lifecycle-script flag, exact dependency count
+  and platform-restriction flag, and rejects a leader verdict that conflicts
+  with the verdict derived from either the leader's or its own facts.
+- **Declarations are owner-only and unique per version.** Otherwise a third
+  party could declare a version first with a scope that guarantees a violation.
 
 ## Storage
 
@@ -58,6 +63,9 @@ check_compliance(declaration_id)
   eventual verdict per version declaration.
 - `ledgers: TreeMap[str, PackageLedger]` — permanent, public compliance
   counters per package.
+- `declaration_keys: TreeMap[str, u256]` — `"<package>@<version>"` to declaration id.
+- `latest_declaration_by_sender: TreeMap[str, u256]` — lowercase sender address to the id of
+  that sender's latest declaration.
 
 No `DynArray` anywhere in this contract — every field is a scalar or a
 fixed-shape record, so the delimiter-joined-string workaround this project
